@@ -13,6 +13,8 @@ import httpx
 from openai import AsyncOpenAI
 import yaml
 
+from copilot_auth import find_copilot_token
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s: %(message)s",
@@ -20,6 +22,8 @@ logging.basicConfig(
 
 VISION_MODEL_TAGS = ("claude", "gemini", "gemma", "gpt-4", "gpt-5", "grok-4", "llama", "llava", "mistral", "o3", "o4", "vision", "vl")
 PROVIDERS_SUPPORTING_USERNAMES = ("openai", "x-ai")
+
+DEFAULT_API_KEY = "sk-no-key-required"
 
 EMBED_COLOR_COMPLETE = discord.Color.dark_green()
 EMBED_COLOR_INCOMPLETE = discord.Color.orange()
@@ -144,7 +148,15 @@ async def on_message(new_msg: discord.Message) -> None:
     provider_config = config["providers"][provider]
 
     base_url = provider_config["base_url"]
-    api_key = provider_config.get("api_key", "sk-no-key-required")
+    api_key = provider_config.get("api_key", DEFAULT_API_KEY)
+    
+    # Special handling for GitHub Copilot provider
+    if provider == "copilot" and api_key == DEFAULT_API_KEY:
+        if copilot_token := find_copilot_token():
+            api_key = copilot_token
+        else:
+            logging.warning("GitHub Copilot token not found. Please authenticate with an IDE or set GITHUB_TOKEN environment variable.")
+    
     openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
     model_parameters = config["models"].get(provider_slash_model, None)

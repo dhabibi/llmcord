@@ -39,6 +39,7 @@ llmcord supports remote models from:
 - [Mistral API](https://docs.mistral.ai/getting-started/models/models_overview)
 - [Groq API](https://console.groq.com/docs/models)
 - [OpenRouter API](https://openrouter.ai/models)
+- [GitHub Copilot](https://github.com/features/copilot) (requires authentication via IDE or GitHub CLI)
 
 Or run local models with:
 - [Ollama](https://ollama.com)
@@ -88,7 +89,7 @@ Or run local models with:
 
 | Setting | Description |
 | --- | --- |
-| **providers** | Add the LLM providers you want to use, each with a `base_url` and optional `api_key` entry. Popular providers (`openai`, `ollama`, etc.) are already included.<br /><br />**Only supports OpenAI compatible APIs.**<br /><br />**Some providers may need `extra_headers` / `extra_query` / `extra_body` entries for extra HTTP data. See the included `azure-openai` provider for an example.** |
+| **providers** | Add the LLM providers you want to use, each with a `base_url` and optional `api_key` entry. Popular providers (`openai`, `ollama`, etc.) are already included.<br /><br />**Only supports OpenAI compatible APIs.**<br /><br />**Some providers may need `extra_headers` / `extra_query` / `extra_body` entries for extra HTTP data. See the included `azure-openai` provider for an example.**<br /><br />**For GitHub Copilot:** The `api_key` is optional and will be auto-discovered from these sources in order:<br />1. `GITHUB_TOKEN` environment variable<br />2. `~/.config/github-copilot/hosts.json`<br />3. `~/.config/github-copilot/apps.json`<br />4. `$XDG_CONFIG_HOME/github-copilot/` paths<br /><br />To set up: authenticate with [VSCode](https://code.visualstudio.com/), [JetBrains](https://www.jetbrains.com/), [gh CLI](https://cli.github.com/), or a [Copilot plugin](https://github.com/github/copilot.vim). The bot will automatically discover your authentication token. |
 | **models** | Add the models you want to use in `<provider>/<model>: <parameters>` format (examples are included). When you run `/model` these models will show up as autocomplete suggestions.<br /><br />**Refer to each provider's documentation for supported parameters.**<br /><br />**The first model in your `models` list will be the default model at startup.**<br /><br />**Some vision models may need `:vision` added to the end of their name to enable image support.** |
 | **system_prompt** | Write anything you want to customize the bot's behavior!<br /><br />**Leave blank for no system prompt.**<br /><br />**You can use the `{date}` and `{time}` tags in your system prompt to insert the current date and time, based on your host computer's time zone.** |
 
