@@ -94,6 +94,8 @@ def _extract_token_from_file(path: Path) -> Optional[str]:
         data = json.load(f)
     
     # Look for github.com entry with token
+    # Note: This is a dictionary key lookup (exact match), not URL substring checking.
+    # The "github.com" key is the standard format used by GitHub Copilot clients.
     if "github.com" in data and isinstance(data["github.com"], dict):
         github_data = data["github.com"]
         
