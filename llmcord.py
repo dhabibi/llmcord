@@ -166,7 +166,7 @@ async def call_mcp_tool(server_name: str, tool_name: str, arguments: dict[str, A
         else:
             return str(result)
     
-    except Exception:
+    except Exception as e:
         logging.exception(f"Error calling MCP tool '{tool_name}' on server '{server_name}'")
         return f"Error calling tool {tool_name}: {str(e)}"
 
