@@ -9,3 +9,6 @@ beautifulsoup4
 html2text
 faiss-cpu
 numpy
+
+# For Postgres backend (optional, alternative to SQLite)
+# asyncpg
