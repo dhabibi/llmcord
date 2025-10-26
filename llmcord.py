@@ -2,6 +2,7 @@ import asyncio
 from base64 import b64encode
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 import logging
 from typing import Any, Literal, Optional
 
@@ -12,6 +13,15 @@ from discord.ui import LayoutView, TextDisplay
 import httpx
 from openai import AsyncOpenAI
 import yaml
+
+# MCP imports (optional - will gracefully degrade if not installed)
+try:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+    logging.warning("MCP library not installed. MCP support will be disabled. Install with: pip install mcp")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,6 +51,10 @@ curr_model = next(iter(config["models"]))
 msg_nodes = {}
 last_task_time = 0
 
+# MCP state
+mcp_sessions = {}
+mcp_tools = []
+
 intents = discord.Intents.default()
 intents.message_content = True
 activity = discord.CustomActivity(name=(config.get("status_message") or "github.com/jakobdylanc/llmcord")[:128])
@@ -63,6 +77,113 @@ class MsgNode:
     parent_msg: Optional[discord.Message] = None
 
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+async def initialize_mcp_servers() -> None:
+    """Initialize MCP server connections and discover tools."""
+    global mcp_sessions, mcp_tools
+    
+    if not MCP_AVAILABLE:
+        logging.info("MCP not available, skipping MCP server initialization")
+        return
+    
+    config = get_config()
+    mcp_server_configs = config.get("mcp_servers", [])
+    
+    if not mcp_server_configs:
+        logging.info("No MCP servers configured")
+        return
+    
+    logging.info(f"Initializing {len(mcp_server_configs)} MCP server(s)...")
+    
+    for server_config in mcp_server_configs:
+        server_name = server_config.get("name", "unknown")
+        command = server_config.get("command")
+        args = server_config.get("args", [])
+        env = server_config.get("env", {})
+        
+        if not command:
+            logging.warning(f"MCP server '{server_name}' missing command, skipping")
+            continue
+        
+        try:
+            server_params = StdioServerParameters(
+                command=command,
+                args=args,
+                env=env if env else None
+            )
+            
+            stdio_transport = await stdio_client(server_params).__aenter__()
+            session = await ClientSession(stdio_transport[0], stdio_transport[1]).__aenter__()
+            await session.initialize()
+            
+            # Store session for later cleanup
+            mcp_sessions[server_name] = (session, stdio_transport)
+            
+            # List available tools
+            tools_result = await session.list_tools()
+            server_tools = tools_result.tools if hasattr(tools_result, 'tools') else []
+            
+            # Convert MCP tools to OpenAI function calling format
+            for tool in server_tools:
+                tool_def = {
+                    "type": "function",
+                    "function": {
+                        "name": f"{server_name}_{tool.name}",
+                        "description": tool.description or f"Tool {tool.name} from {server_name}",
+                        "parameters": tool.inputSchema if hasattr(tool, 'inputSchema') else {"type": "object", "properties": {}}
+                    }
+                }
+                tool_def["_mcp_server"] = server_name
+                tool_def["_mcp_tool_name"] = tool.name
+                mcp_tools.append(tool_def)
+            
+            logging.info(f"MCP server '{server_name}' initialized with {len(server_tools)} tool(s)")
+        
+        except Exception:
+            logging.exception(f"Failed to initialize MCP server '{server_name}'")
+    
+    logging.info(f"MCP initialization complete. Total tools available: {len(mcp_tools)}")
+
+
+async def call_mcp_tool(server_name: str, tool_name: str, arguments: dict[str, Any]) -> Any:
+    """Call an MCP tool and return the result."""
+    if server_name not in mcp_sessions:
+        raise ValueError(f"MCP server '{server_name}' not found")
+    
+    session, _ = mcp_sessions[server_name]
+    
+    try:
+        result = await session.call_tool(tool_name, arguments=arguments)
+        
+        # Extract content from result
+        if hasattr(result, 'content'):
+            if isinstance(result.content, list):
+                # Combine multiple content items
+                return "\n".join(str(item.text if hasattr(item, 'text') else item) for item in result.content)
+            else:
+                return str(result.content)
+        else:
+            return str(result)
+    
+    except Exception as e:
+        logging.exception(f"Error calling MCP tool '{tool_name}' on server '{server_name}'")
+        return f"Error calling tool {tool_name}: {str(e)}"
+
+
+async def cleanup_mcp_servers() -> None:
+    """Clean up MCP server connections."""
+    global mcp_sessions
+    
+    for server_name, (session, stdio_transport) in mcp_sessions.items():
+        try:
+            await session.__aexit__(None, None, None)
+            await stdio_transport.__aexit__(None, None, None)
+            logging.info(f"MCP server '{server_name}' closed")
+        except Exception:
+            logging.exception(f"Error closing MCP server '{server_name}'")
+    
+    mcp_sessions.clear()
 
 
 @discord_bot.tree.command(name="model", description="View or switch the current model")
@@ -256,8 +377,14 @@ async def on_message(new_msg: discord.Message) -> None:
     curr_content = finish_reason = None
     response_msgs = []
     response_contents = []
+    tool_calls_list = []
+    current_tool_call = None
 
+    # Add MCP tools to the request if available
     openai_kwargs = dict(model=model, messages=messages[::-1], stream=True, extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body)
+    if mcp_tools:
+        openai_kwargs["tools"] = mcp_tools
+        openai_kwargs["tool_choice"] = "auto"
 
     if use_plain_responses := config.get("use_plain_responses", False):
         max_message_length = 4000
@@ -283,6 +410,29 @@ async def on_message(new_msg: discord.Message) -> None:
                     continue
 
                 finish_reason = choice.finish_reason
+                
+                # Handle tool calls (streaming delta)
+                if hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
+                    for tool_call_delta in choice.delta.tool_calls:
+                        if tool_call_delta.index is not None:
+                            # Ensure we have enough slots in the list
+                            while len(tool_calls_list) <= tool_call_delta.index:
+                                tool_calls_list.append({
+                                    "id": "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""}
+                                })
+                            
+                            current_tool_call = tool_calls_list[tool_call_delta.index]
+                            
+                            if tool_call_delta.id:
+                                current_tool_call["id"] = tool_call_delta.id
+                            
+                            if tool_call_delta.function:
+                                if tool_call_delta.function.name:
+                                    current_tool_call["function"]["name"] = tool_call_delta.function.name
+                                if tool_call_delta.function.arguments:
+                                    current_tool_call["function"]["arguments"] += tool_call_delta.function.arguments
 
                 prev_content = curr_content or ""
                 curr_content = choice.delta.content or ""
@@ -320,6 +470,75 @@ async def on_message(new_msg: discord.Message) -> None:
             if use_plain_responses:
                 for content in response_contents:
                     await reply_helper(view=LayoutView().add_item(TextDisplay(content=content)))
+            
+            # Handle tool calls if model requested them
+            if finish_reason == "tool_calls" and tool_calls_list and mcp_tools:
+                logging.info(f"Model requested {len(tool_calls_list)} tool call(s)")
+                
+                # Show a status message that tools are being executed
+                if not use_plain_responses and response_msgs:
+                    tool_status_embed = discord.Embed(
+                        description=f"🔧 Executing {len(tool_calls_list)} tool(s)...",
+                        color=discord.Color.blue()
+                    )
+                    status_msg = await response_msgs[-1].reply(embed=tool_status_embed, silent=True)
+                
+                try:
+                    # Execute each tool call
+                    tool_results = []
+                    for tool_call in tool_calls_list:
+                        func_name = tool_call["function"]["name"]
+                        func_args_str = tool_call["function"]["arguments"]
+                        
+                        try:
+                            func_args = json.loads(func_args_str)
+                        except json.JSONDecodeError:
+                            logging.error(f"Failed to parse tool arguments: {func_args_str}")
+                            func_args = {}
+                        
+                        # Find the tool definition to get server name
+                        tool_def = next((t for t in mcp_tools if t["function"]["name"] == func_name), None)
+                        
+                        if tool_def:
+                            server_name = tool_def["_mcp_server"]
+                            tool_name = tool_def["_mcp_tool_name"]
+                            
+                            logging.info(f"Calling MCP tool: {func_name} (server: {server_name}, tool: {tool_name})")
+                            
+                            try:
+                                tool_result = await call_mcp_tool(server_name, tool_name, func_args)
+                                tool_result_str = str(tool_result)
+                                tool_results.append(f"**{func_name}:**\n{tool_result_str}")
+                            except Exception as e:
+                                logging.exception(f"Error executing tool {func_name}")
+                                tool_result_str = f"Error: {str(e)}"
+                                tool_results.append(f"**{func_name}:** ❌ {tool_result_str}")
+                        else:
+                            logging.warning(f"Tool {func_name} not found in MCP tools")
+                            tool_results.append(f"**{func_name}:** ❌ Tool not found")
+                    
+                    # Delete status message if it exists
+                    if not use_plain_responses and response_msgs and 'status_msg' in locals():
+                        try:
+                            await status_msg.delete()
+                        except:
+                            pass
+                    
+                    # Send tool results as a reply
+                    if tool_results:
+                        tool_results_text = "\n\n".join(tool_results)
+                        if not use_plain_responses:
+                            tool_embed = discord.Embed(
+                                title="🔧 Tool Results",
+                                description=tool_results_text[:4096],
+                                color=discord.Color.green()
+                            )
+                            await response_msgs[-1].reply(embed=tool_embed, silent=True)
+                        else:
+                            await response_msgs[-1].reply(f"🔧 **Tool Results:**\n{tool_results_text[:2000]}", silent=True)
+                
+                except Exception:
+                    logging.exception("Error handling tool calls")
 
     except Exception:
         logging.exception("Error while generating response")
@@ -336,7 +555,13 @@ async def on_message(new_msg: discord.Message) -> None:
 
 
 async def main() -> None:
-    await discord_bot.start(config["bot_token"])
+    try:
+        # Initialize MCP servers before starting the bot
+        await initialize_mcp_servers()
+        await discord_bot.start(config["bot_token"])
+    finally:
+        # Clean up MCP servers on shutdown
+        await cleanup_mcp_servers()
 
 
 try:

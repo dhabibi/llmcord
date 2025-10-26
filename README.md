@@ -49,9 +49,24 @@ Or run local models with:
 
 ---
 
+### MCP (Model Context Protocol) support:
+![image](https://github.com/user-attachments/assets/mcp-tools-example)
+
+llmcord now supports the Model Context Protocol, allowing LLMs to interact with external tools and data sources! MCP servers can provide tools for:
+- File system access
+- Database queries
+- GitHub integration
+- Web search
+- And much more!
+
+Simply configure MCP servers in your `config.yaml` and the bot will automatically discover available tools and make them available to the LLM.
+
+---
+
 ### And more:
 - Supports image attachments when using a vision model (like gpt-5, grok-4, claude-4, etc.)
 - Supports text file attachments (.txt, .py, .c, etc.)
+- **MCP (Model Context Protocol) support** - Connect LLMs to external tools and data sources
 - Customizable personality (aka system prompt)
 - User identity aware (OpenAI API and xAI API only)
 - Streamed responses (turns green when complete, automatically splits into separate messages when too long)
@@ -59,7 +74,7 @@ Or run local models with:
 - Displays helpful warnings when appropriate (like "⚠️ Only using last 25 messages" when the customizable message limit is exceeded)
 - Caches message data in a size-managed (no memory leaks) and mutex-protected (no race conditions) global dictionary to maximize efficiency and minimize Discord API calls
 - Fully asynchronous
-- 1 Python file, ~200 lines of code
+- 1 Python file, ~500 lines of code
 
 ## Instructions
 
@@ -91,6 +106,12 @@ Or run local models with:
 | **providers** | Add the LLM providers you want to use, each with a `base_url` and optional `api_key` entry. Popular providers (`openai`, `ollama`, etc.) are already included.<br /><br />**Only supports OpenAI compatible APIs.**<br /><br />**Some providers may need `extra_headers` / `extra_query` / `extra_body` entries for extra HTTP data. See the included `azure-openai` provider for an example.** |
 | **models** | Add the models you want to use in `<provider>/<model>: <parameters>` format (examples are included). When you run `/model` these models will show up as autocomplete suggestions.<br /><br />**Refer to each provider's documentation for supported parameters.**<br /><br />**The first model in your `models` list will be the default model at startup.**<br /><br />**Some vision models may need `:vision` added to the end of their name to enable image support.** |
 | **system_prompt** | Write anything you want to customize the bot's behavior!<br /><br />**Leave blank for no system prompt.**<br /><br />**You can use the `{date}` and `{time}` tags in your system prompt to insert the current date and time, based on your host computer's time zone.** |
+
+### MCP settings:
+
+| Setting | Description |
+| --- | --- |
+| **mcp_servers** | Configure MCP (Model Context Protocol) servers to provide tools for the LLM. Each server entry should include:<br />- `name`: A unique identifier for the server<br />- `command`: The command to run the MCP server (e.g., `npx`, `python`, `uvx`)<br />- `args`: List of arguments to pass to the command<br />- `env` (optional): Environment variables for the server<br /><br />**Examples:**<br />- Filesystem: `npx -y @modelcontextprotocol/server-filesystem /path/to/files`<br />- GitHub: `npx -y @modelcontextprotocol/server-github` (requires `GITHUB_PERSONAL_ACCESS_TOKEN`)<br />- SQLite: `npx -y @modelcontextprotocol/server-sqlite /path/to/db.db`<br /><br />**Leave empty to disable MCP support.**<br /><br />**Note: The MCP Python library must be installed:** `pip install mcp` |
 
 3. Run the bot:
 
