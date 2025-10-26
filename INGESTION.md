@@ -68,6 +68,11 @@ permissions:
     admin_ids: [YOUR_USER_ID_HERE]
 ```
 
+**To find your Discord user ID:**
+1. Enable Developer Mode in Discord (User Settings → App Settings → Advanced → Developer Mode)
+2. Right-click your username
+3. Select "Copy User ID"
+
 ## Usage
 
 1. **Run the `/ingest` command** in any Discord channel
@@ -112,11 +117,21 @@ FAISS index is built in memory for vector search.
 
 ### Postgres Backend
 
-Uses the schema described in the problem statement with:
+Uses a comprehensive schema with:
 - pgvector extension for vector search
 - pg_trgm for trigram matching
 - tsvector for full-text search
-- IVFFlat or HNSW indexes
+- IVFFlat or HNSW indexes for efficient ANN search
+
+The schema includes:
+- `source_messages`: Discord message provenance
+- `documents`: Document metadata with SHA-256 deduplication
+- `document_versions`: Multiple versions of normalized text
+- `document_chunks`: Text chunks with embeddings (vector(768))
+- `collections`: Grouping documents by channel/project
+- `ingest_jobs`: Job tracking with timing metrics
+
+Each chunk stores both a tsvector for lexical search and a vector embedding for semantic search, enabling hybrid retrieval.
 
 ## Search (Hybrid)
 

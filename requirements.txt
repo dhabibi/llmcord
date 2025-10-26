@@ -11,4 +11,5 @@ faiss-cpu
 numpy
 
 # For Postgres backend (optional, alternative to SQLite)
-# asyncpg
+# Uncomment if using Postgres instead of SQLite:
+# asyncpg>=0.29.0
