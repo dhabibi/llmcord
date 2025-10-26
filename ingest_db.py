@@ -628,13 +628,13 @@ class IngestDB:
             # Lexical search using FTS5
             cursor = await self._conn.execute(
                 """SELECT dc.id, dc.text, dc.chunk_index, d.id as doc_id, d.title, d.url,
-                          rank as score
+                          fts.rank as score
                    FROM document_chunks_fts fts
-                   JOIN document_chunks dc ON fts.chunk_id = dc.id
+                   JOIN document_chunks dc ON dc.rowid = fts.rowid
                    JOIN document_versions dv ON dc.document_version_id = dv.id
                    JOIN documents d ON dv.document_id = d.id
                    WHERE document_chunks_fts MATCH ?
-                   ORDER BY rank
+                   ORDER BY fts.rank
                    LIMIT ?""",
                 (query_text, k * 4)
             )
