@@ -13,6 +13,8 @@ import httpx
 from openai import AsyncOpenAI
 import yaml
 
+from copilot_auth import find_copilot_token
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s: %(message)s",
@@ -145,6 +147,14 @@ async def on_message(new_msg: discord.Message) -> None:
 
     base_url = provider_config["base_url"]
     api_key = provider_config.get("api_key", "sk-no-key-required")
+    
+    # Special handling for GitHub Copilot provider
+    if provider == "copilot" and api_key == "sk-no-key-required":
+        if copilot_token := find_copilot_token():
+            api_key = copilot_token
+        else:
+            logging.warning("GitHub Copilot token not found. Please authenticate with an IDE or set GITHUB_TOKEN environment variable.")
+    
     openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
     model_parameters = config["models"].get(provider_slash_model, None)

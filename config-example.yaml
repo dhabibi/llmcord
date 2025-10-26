@@ -33,6 +33,13 @@ providers:
     api_key: 
     extra_query:
       api-version: 2024-12-01-preview
+  copilot:
+    base_url: https://api.githubcopilot.com
+    # api_key is optional - will be auto-discovered from:
+    #   1. GITHUB_TOKEN environment variable
+    #   2. ~/.config/github-copilot/hosts.json
+    #   3. ~/.config/github-copilot/apps.json
+    # To set up: authenticate with VSCode, JetBrains, gh CLI, or a Copilot plugin
   google:
     base_url: https://generativelanguage.googleapis.com/v1beta/openai
     api_key: 
@@ -73,6 +80,14 @@ models:
     reasoning_effort: high
 
   openrouter/anthropic/claude-sonnet-4:
+
+  copilot/gpt-4o:
+
+  copilot/gpt-4o-mini:
+
+  copilot/o1-preview:
+
+  copilot/claude-3.5-sonnet:
 
   ollama/llama4:
 
