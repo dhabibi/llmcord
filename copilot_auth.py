@@ -90,7 +90,7 @@ def _extract_token_from_file(path: Path) -> Optional[str]:
     Returns:
         The token if found, None otherwise.
     """
-    with open(path, 'r') as f:
+    with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
     # Look for github.com entry with token
@@ -101,8 +101,8 @@ def _extract_token_from_file(path: Path) -> Optional[str]:
         for key in ["oauth_token", "token", "access_token", "value"]:
             if key in github_data and isinstance(github_data[key], str):
                 token = github_data[key]
-                if token:
-                    return token
+                if token and token.strip():
+                    return token.strip()
     
     # Fallback: scan all nested objects for any string that looks like a token
     for value in data.values():
@@ -110,7 +110,7 @@ def _extract_token_from_file(path: Path) -> Optional[str]:
             for key in ["oauth_token", "token", "access_token", "value"]:
                 if key in value and isinstance(value[key], str):
                     token = value[key]
-                    if token:
-                        return token
+                    if token and token.strip():
+                        return token.strip()
     
     return None

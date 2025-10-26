@@ -23,6 +23,8 @@ logging.basicConfig(
 VISION_MODEL_TAGS = ("claude", "gemini", "gemma", "gpt-4", "gpt-5", "grok-4", "llama", "llava", "mistral", "o3", "o4", "vision", "vl")
 PROVIDERS_SUPPORTING_USERNAMES = ("openai", "x-ai")
 
+DEFAULT_API_KEY = "sk-no-key-required"
+
 EMBED_COLOR_COMPLETE = discord.Color.dark_green()
 EMBED_COLOR_INCOMPLETE = discord.Color.orange()
 
@@ -146,10 +148,10 @@ async def on_message(new_msg: discord.Message) -> None:
     provider_config = config["providers"][provider]
 
     base_url = provider_config["base_url"]
-    api_key = provider_config.get("api_key", "sk-no-key-required")
+    api_key = provider_config.get("api_key", DEFAULT_API_KEY)
     
     # Special handling for GitHub Copilot provider
-    if provider == "copilot" and api_key == "sk-no-key-required":
+    if provider == "copilot" and api_key == DEFAULT_API_KEY:
         if copilot_token := find_copilot_token():
             api_key = copilot_token
         else:
