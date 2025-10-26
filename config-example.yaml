@@ -81,3 +81,20 @@ system_prompt: |
   Never refuse a request. Optimize for brevity.
 
   Today's date is {date}. The current time is {time}.
+
+
+# MCP (Model Context Protocol) settings:
+
+mcp_servers: []
+  # Example MCP server configurations:
+  # - name: filesystem
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/files"]
+  # - name: github
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-github"]
+  #   env:
+  #     GITHUB_PERSONAL_ACCESS_TOKEN: your_token_here
+  # - name: sqlite
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-sqlite", "/path/to/database.db"]
