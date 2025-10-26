@@ -36,9 +36,10 @@ class ContentExtractor:
         domain = parsed.netloc.lower()
         
         # Special handling for specific domains
-        if 'twitter.com' in domain or 'x.com' in domain:
+        # Use exact domain matching or proper suffix matching to avoid bypasses
+        if domain == 'twitter.com' or domain.endswith('.twitter.com') or domain == 'x.com' or domain.endswith('.x.com'):
             return await self._extract_twitter(url)
-        elif 'arxiv.org' in domain:
+        elif domain == 'arxiv.org' or domain.endswith('.arxiv.org'):
             return await self._extract_arxiv(url)
         else:
             return await self._extract_generic_webpage(url)
