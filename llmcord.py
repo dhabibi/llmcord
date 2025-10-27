@@ -23,6 +23,19 @@ except ImportError:
     MCP_AVAILABLE = False
     logging.warning("MCP library not installed. MCP support will be disabled. Install with: pip install mcp")
 
+# Optional ingestion imports
+try:
+    from ingest_db import IngestDB, StorageBackend, ContentKind, DocumentChunk
+    from ingest_extractors import ContentExtractor, create_chunks
+    from ingest_embeddings import EmbeddingGenerator, estimate_tokens
+    INGEST_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Ingestion features not available: {e}")
+    INGEST_AVAILABLE = False
+    IngestDB = None
+    ContentExtractor = None
+    EmbeddingGenerator = None
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s: %(message)s",
@@ -54,6 +67,11 @@ last_task_time = 0
 # MCP state
 mcp_sessions = {}
 mcp_tools = []
+
+# Ingestion system (optional)
+ingest_db = None
+ingest_extractor = None
+ingest_embedder = None
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -214,6 +232,265 @@ async def model_autocomplete(interaction: discord.Interaction, curr_str: str) ->
     choices += [Choice(name=f"○ {model}", value=model) for model in config["models"] if model != curr_model and curr_str.lower() in model.lower()]
 
     return choices[:25]
+
+
+@discord_bot.tree.command(name="ingest", description="Ingest links and attachments into knowledge base")
+async def ingest_command(interaction: discord.Interaction) -> None:
+    """Ingest all links and file attachments from recent messages in this channel."""
+    global ingest_db, ingest_extractor, ingest_embedder
+    
+    if not INGEST_AVAILABLE:
+        await interaction.response.send_message(
+            "❌ Ingestion feature not available. Install required dependencies: "
+            "`pip install aiosqlite beautifulsoup4 html2text faiss-cpu numpy`",
+            ephemeral=True
+        )
+        return
+        
+    # Check if ingestion is enabled in config
+    config = await asyncio.to_thread(get_config)
+    ingest_config = config.get("ingest", {})
+    
+    if not ingest_config.get("enabled", False):
+        await interaction.response.send_message(
+            "❌ Ingestion is not enabled. Set `ingest.enabled: true` in config.yaml",
+            ephemeral=True
+        )
+        return
+        
+    # Check permissions
+    user_is_admin = interaction.user.id in config["permissions"]["users"]["admin_ids"]
+    if not user_is_admin:
+        await interaction.response.send_message(
+            "❌ You don't have permission to use this command.",
+            ephemeral=True
+        )
+        return
+        
+    # Initialize ingestion system if needed
+    if ingest_db is None:
+        try:
+            backend_str = ingest_config.get("backend", "sqlite")
+            backend = StorageBackend.SQLITE if backend_str == "sqlite" else StorageBackend.POSTGRES
+            connection_string = ingest_config.get("connection_string", "ingest.db")
+            
+            ingest_db = IngestDB(backend, connection_string)
+            await ingest_db.connect()
+            
+            ingest_extractor = ContentExtractor(httpx_client)
+            
+            # Initialize embedder
+            embed_config = ingest_config.get("embedding", {})
+            embed_provider = embed_config.get("provider", "openai")
+            embed_model = embed_config.get("model", "text-embedding-3-small")
+            embed_dim = embed_config.get("dimension", 768)
+            
+            # Use custom base_url/api_key or fall back to provider config
+            embed_base_url = embed_config.get("base_url")
+            embed_api_key = embed_config.get("api_key")
+            
+            if not embed_base_url and embed_provider in config.get("providers", {}):
+                provider_config = config["providers"][embed_provider]
+                embed_base_url = provider_config.get("base_url")
+                embed_api_key = provider_config.get("api_key")
+                
+            ingest_embedder = EmbeddingGenerator(
+                provider=embed_provider,
+                model=embed_model,
+                base_url=embed_base_url,
+                api_key=embed_api_key,
+                dimension=embed_dim
+            )
+            
+            logging.info("Ingestion system initialized")
+            
+        except Exception as e:
+            logging.exception("Error initializing ingestion system")
+            await interaction.response.send_message(
+                f"❌ Failed to initialize ingestion system: {e}",
+                ephemeral=True
+            )
+            return
+            
+    # Defer response since this might take a while
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # Get recent messages from the channel (last 100)
+        messages = []
+        async for message in interaction.channel.history(limit=100):
+            messages.append(message)
+            
+        # Extract all URLs and attachments
+        items_to_ingest = []
+        
+        for message in messages:
+            # Store source message
+            source_msg_id = await ingest_db.store_source_message(
+                guild_id=str(message.guild.id) if message.guild else None,
+                channel_id=str(message.channel.id),
+                message_id=str(message.id),
+                author_id=str(message.author.id),
+                posted_at=message.created_at,
+                raw_json={
+                    "content": message.content,
+                    "author": str(message.author),
+                    "channel": str(message.channel)
+                }
+            )
+            
+            # Extract URLs from message content
+            import re
+            url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+            urls = re.findall(url_pattern, message.content)
+            
+            for url in urls:
+                items_to_ingest.append({
+                    "type": "url",
+                    "source": url,
+                    "source_msg_id": source_msg_id,
+                    "message": message
+                })
+                
+            # Extract attachments
+            for attachment in message.attachments:
+                items_to_ingest.append({
+                    "type": "attachment",
+                    "source": attachment,
+                    "source_msg_id": source_msg_id,
+                    "message": message
+                })
+                
+        if not items_to_ingest:
+            await interaction.followup.send("ℹ️ No links or attachments found in recent messages.")
+            return
+            
+        # Process items
+        ingested_count = 0
+        failed_count = 0
+        skipped_count = 0
+        
+        status_msg = await interaction.followup.send(
+            f"📥 Ingesting {len(items_to_ingest)} items... (0/{len(items_to_ingest)})"
+        )
+        
+        chunk_size = ingest_config.get("chunk_size", 900)
+        chunk_overlap = ingest_config.get("chunk_overlap", 120)
+        
+        for i, item in enumerate(items_to_ingest):
+            try:
+                # Extract content
+                if item["type"] == "url":
+                    url = item["source"]
+                    logging.info(f"Extracting content from URL: {url}")
+                    
+                    raw_content, markdown_text, plain_text, title = await ingest_extractor.extract_from_url(url)
+                    content_kind = ContentKind.WEBPAGE
+                    
+                elif item["type"] == "attachment":
+                    attachment = item["source"]
+                    logging.info(f"Extracting content from attachment: {attachment.filename}")
+                    
+                    url = attachment.url
+                    att_content = await attachment.read()
+                    
+                    raw_content, markdown_text, plain_text, title = await ingest_extractor.extract_from_attachment(
+                        att_content,
+                        attachment.filename,
+                        attachment.content_type or "application/octet-stream"
+                    )
+                    
+                    # Determine content kind from content type
+                    if attachment.content_type:
+                        if attachment.content_type.startswith('text/'):
+                            content_kind = ContentKind.CODE
+                        elif attachment.content_type == 'application/pdf':
+                            content_kind = ContentKind.PDF
+                        elif attachment.content_type.startswith('image/'):
+                            content_kind = ContentKind.IMAGE
+                        else:
+                            content_kind = ContentKind.OTHER
+                    else:
+                        content_kind = ContentKind.OTHER
+                else:
+                    continue
+                    
+                # Create chunks
+                text_to_chunk = plain_text or markdown_text or ""
+                if not text_to_chunk.strip():
+                    logging.warning(f"No text content extracted from {url}")
+                    skipped_count += 1
+                    continue
+                    
+                chunk_tuples = create_chunks(text_to_chunk, chunk_size, chunk_overlap)
+                
+                if not chunk_tuples:
+                    logging.warning(f"No chunks created for {url}")
+                    skipped_count += 1
+                    continue
+                    
+                # Generate embeddings for chunks
+                chunk_texts = [chunk_text for _, _, chunk_text in chunk_tuples]
+                embeddings = await ingest_embedder.generate_embeddings_batch(chunk_texts)
+                
+                # Create DocumentChunk objects
+                chunks = []
+                for j, ((start, end, text), embedding) in enumerate(zip(chunk_tuples, embeddings)):
+                    token_count = estimate_tokens(text)
+                    chunks.append(DocumentChunk(
+                        chunk_index=j,
+                        char_start=start,
+                        char_end=end,
+                        text=text,
+                        embedding=embedding,
+                        token_count=token_count
+                    ))
+                    
+                # Store document
+                doc_id = await ingest_db.store_document(
+                    source_message_id=item["source_msg_id"],
+                    url=url if item["type"] == "url" else None,
+                    content=raw_content,
+                    title=title,
+                    content_kind=content_kind,
+                    text_md=markdown_text,
+                    text_plain=plain_text,
+                    chunks=chunks,
+                    meta={
+                        "channel_id": str(item["message"].channel.id),
+                        "message_id": str(item["message"].id)
+                    }
+                )
+                
+                ingested_count += 1
+                logging.info(f"Ingested document {doc_id} with {len(chunks)} chunks")
+                
+            except Exception as e:
+                logging.exception(f"Error ingesting item: {e}")
+                failed_count += 1
+                
+            # Update status every 5 items
+            if (i + 1) % 5 == 0 or (i + 1) == len(items_to_ingest):
+                await status_msg.edit(
+                    content=f"📥 Ingesting... ({i + 1}/{len(items_to_ingest)}) | "
+                            f"✅ {ingested_count} ingested | ❌ {failed_count} failed | ⏭️ {skipped_count} skipped"
+                )
+                
+        # Final summary
+        summary = (
+            f"✅ Ingestion complete!\n\n"
+            f"**Results:**\n"
+            f"• {ingested_count} documents ingested\n"
+            f"• {failed_count} failed\n"
+            f"• {skipped_count} skipped (no content)\n"
+            f"• Total items processed: {len(items_to_ingest)}"
+        )
+        
+        await status_msg.edit(content=summary)
+        
+    except Exception as e:
+        logging.exception("Error during ingestion")
+        await interaction.followup.send(f"❌ Error during ingestion: {e}", ephemeral=True)
 
 
 @discord_bot.event

@@ -3,3 +3,14 @@ httpx
 openai
 pyyaml
 mcp>=1.0.0
+
+# Ingestion dependencies (optional)
+aiosqlite
+beautifulsoup4
+html2text
+faiss-cpu
+numpy
+
+# For Postgres backend (optional, alternative to SQLite)
+# Uncomment if using Postgres instead of SQLite:
+# asyncpg>=0.29.0

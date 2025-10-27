@@ -67,6 +67,7 @@ Simply configure MCP servers in your `config.yaml` and the bot will automaticall
 - Supports image attachments when using a vision model (like gpt-5, grok-4, claude-4, etc.)
 - Supports text file attachments (.txt, .py, .c, etc.)
 - **MCP (Model Context Protocol) support** - Connect LLMs to external tools and data sources
+- **Document ingestion with `/ingest`** - Ingest links and files from Discord into a searchable knowledge base (SQLite+FTS5+FAISS or Postgres+pgvector). See [INGESTION.md](INGESTION.md) for details.
 - Customizable personality (aka system prompt)
 - User identity aware (OpenAI API and xAI API only)
 - Streamed responses (turns green when complete, automatically splits into separate messages when too long)
@@ -74,7 +75,7 @@ Simply configure MCP servers in your `config.yaml` and the bot will automaticall
 - Displays helpful warnings when appropriate (like "⚠️ Only using last 25 messages" when the customizable message limit is exceeded)
 - Caches message data in a size-managed (no memory leaks) and mutex-protected (no race conditions) global dictionary to maximize efficiency and minimize Discord API calls
 - Fully asynchronous
-- 1 Python file, ~500 lines of code
+- 1 Python file (~570 lines core bot) + optional MCP support + optional ingestion modules
 
 ## Instructions
 

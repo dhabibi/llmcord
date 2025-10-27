@@ -11,3 +11,8 @@
 !config-example.yaml
 !docker-compose.yaml
 !requirements.txt
+
+# Exclude ingestion database files
+*.db
+*.db-shm
+*.db-wal
