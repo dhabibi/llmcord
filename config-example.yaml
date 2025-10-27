@@ -96,3 +96,30 @@ system_prompt: |
   Never refuse a request. Optimize for brevity.
 
   Today's date is {date}. The current time is {time}.
+
+
+# Ingestion settings (optional - for /ingest command):
+
+ingest:
+  enabled: false
+  
+  # Storage backend: 'sqlite' or 'postgres'
+  backend: sqlite
+  
+  # Connection string
+  # SQLite: path to database file (e.g., 'ingest.db')
+  # Postgres: postgres://user:pass@host:port/dbname
+  connection_string: ingest.db
+  
+  # Embedding settings
+  embedding:
+    provider: openai
+    model: text-embedding-3-small
+    dimension: 768
+    # Optional: override base_url and api_key (uses main provider config by default)
+    # base_url: http://localhost:11434/v1
+    # api_key: 
+  
+  # Chunking parameters
+  chunk_size: 900        # characters (approximates ~225 tokens)
+  chunk_overlap: 120     # characters

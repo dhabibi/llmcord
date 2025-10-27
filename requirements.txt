@@ -2,3 +2,14 @@ discord.py>=2.6.0
 httpx
 openai
 pyyaml
+
+# Ingestion dependencies (optional)
+aiosqlite
+beautifulsoup4
+html2text
+faiss-cpu
+numpy
+
+# For Postgres backend (optional, alternative to SQLite)
+# Uncomment if using Postgres instead of SQLite:
+# asyncpg>=0.29.0
